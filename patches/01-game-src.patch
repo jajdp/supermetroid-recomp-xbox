@@ -1,0 +1,432 @@
+diff --git a/src/main.c b/src/main.c
+index c8a11d2..4d0a07f 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -43,6 +43,24 @@
+ #include "sm_renderer.h"
+ #include "sm_video.h"
+ #include "crc32.h"
++
++/* Volcado de la RAM del invitado, cuadro a cuadro elegido (ver SM_RAM_DUMP en
++   el bucle principal). Sirve para comparar byte a byte dos builds del MISMO
++   arbol compilados con compiladores distintos. */
++#define SM_RAM_DUMP_MAX 16
++static void SmDumpGuestRam(const char *prefix, unsigned frame) {
++  char path[1024];
++  snprintf(path, sizeof(path), "%s-f%u.bin", prefix, frame);
++  FILE *f = fopen(path, "wb");
++  if (!f) {
++    fprintf(stderr, "[sm_ram_dump] no se pudo abrir %s\n", path);
++    return;
++  }
++  fwrite(g_ram, 1, 0x20000, f);
++  fclose(f);
++  fprintf(stderr, "[sm_ram_dump] cuadro %u -> %s (crc=%08x)\n",
++          frame, path, crc32_compute(g_ram, 0x20000));
++}
+ #if defined(RECOMP_LAUNCHER)
+ #include "sm_mods.h"
+ #endif
+@@ -146,7 +164,14 @@ static uint32 g_input_state;
+  * main loop doesn't clear bits the gamepad just set. OR'd into `inputs`
+  * once per frame alongside g_input_state and axis_buttons. */
+ static uint32 g_pad_buttons;
++#ifdef SM_UWP
++/* Contador de FPS con R3: en la consola arranca ENCENDIDO. No hay teclado para pedirlo ni
++ * variables de entorno, así que el perfil del port lo enciende y R3 solo sirve para quitarlo. */
++static bool g_display_perf = true;
++static int g_fps_real = 60;   /* Contador de FPS con R3: la cadencia real, que es lo que se pinta */
++#else
+ static bool g_display_perf;
++#endif
+ static int g_curr_fps;
+ static int g_ppu_render_flags = 0;
+ static int g_snes_width, g_snes_height;
+@@ -694,7 +719,12 @@ static void DrawPpuFrameWithPerf(void) {
+     RtlDrawPpuFrame(pixel_buffer, pitch, g_ppu_render_flags);
+   }
+   if (g_display_perf)
++#ifdef SM_UWP
++    /* Contador de FPS con R3: la cadencia real, no el coste de componer. */
++    RenderNumber(pixel_buffer + pitch * render_scale, pitch, g_fps_real, render_scale == 4);
++#else
+     RenderNumber(pixel_buffer + pitch * render_scale, pitch, g_curr_fps, render_scale == 4);
++#endif
+ 
+   SmProfileEnd(kSmProfileCompose, profile_start);
+   profile_start = SmProfileStart();
+@@ -813,9 +843,17 @@ static bool SdlRenderer_Init(SDL_Window *window) {
+   SDL_Renderer *renderer = snesrecomp_sdl_create_renderer(
+       g_window, want_software, /*vsync=*/!g_sm_video.fps_enabled && !g_config.disable_frame_delay);
+   if (renderer == NULL) {
++#ifdef SM_UWP
++    host_report_breadcrumb("SDL_CreateRenderer FAILED: %s", SDL_GetError());
++#endif
+     printf("Failed to create renderer: %s\n", SDL_GetError());
+     return false;
+   }
++#ifdef SM_UWP
++  host_report_breadcrumb("SDL_CreateRenderer ok: %s",
++                         snesrecomp_sdl_renderer_name(renderer)
++                             ? snesrecomp_sdl_renderer_name(renderer) : "(sin nombre)");
++#endif
+   if (kDebugFlag) {
+     const char *name = snesrecomp_sdl_renderer_name(renderer);
+     printf("Renderer: %s (vsync=%d)\n", name ? name : "(unknown)",
+@@ -827,6 +865,11 @@ static bool SdlRenderer_Init(SDL_Window *window) {
+   g_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                 g_snes_width * tex_mult, g_snes_height * tex_mult);
+   if (g_texture == NULL) {
++#ifdef SM_UWP
++    host_report_breadcrumb("SDL_CreateTexture FAILED (%dx%d): %s",
++                           g_snes_width * tex_mult, g_snes_height * tex_mult,
++                           SDL_GetError());
++#endif
+     printf("Failed to create texture: %s\n", SDL_GetError());
+     return false;
+   }
+@@ -975,10 +1018,91 @@ static void post_mortem_atexit(void) {
+   recomp_post_mortem_dump("atexit", NULL);
+ }
+ 
++#ifdef SM_UWP
++/* Volver donde lo dejaste (Recompilaciones, 2026-10-06).
++ *
++ * En Dev Mode la Xbox NO suspende los juegos: los TERMINA en cuanto pasan al fondo
++ * y al volver se relanzan desde cero. El motor sabe serializar la máquina entera
++ * (el mismo formato de los estados guardados), así que se escribe uno cada diez
++ * segundos y se vuelve a cargar al arrancar.
++ *
++ * Cada 10 s y no en el aviso de suspensión: cuando ese aviso llega puede que ya no
++ * se emule un cuadro más (medido en Street Fighter EX2 Plus), y el estado solo es
++ * coherente en un borde de cuadro.
++ *
++ * El archivo se aparta antes de cargarlo y se borra después: si un estado corrupto
++ * colgara el juego al restaurarlo, el arranque siguiente ya no lo encuentra y el
++ * juego entra limpio en vez de quedarse inservible.
++ *
++ * La ruta es relativa porque el directorio de trabajo ya es la carpeta de datos de
++ * la app (uwp_entry.cpp). */
++#define SM_ESTADO           "suspension.state"
++#define SM_ESTADO_CARGANDO  "suspension.state.cargando"
++
++static double s_sm_t_estado = 0.0;
++
++/* Estado de otra version: un estado escrito por OTRO binario deja la máquina emulada
++ * inconsistente y el juego sale con los gráficos rotos (le pasó al usuario en Super Mario World
++ * el 2026-10-06). La marca es la ruta del ejecutable, que cambia en cada instalación; la fecha
++ * de compilación NO vale, porque solo cambia si se recompila ESTE archivo. */
++#define SM_ESTADO_MARCA "suspension.marca"
++
++static bool SmEstadoEsDeOtraVersion(void) {
++  char propio[512] = { 0 }, leido[512] = { 0 };
++  FILE *f;
++  GetModuleFileNameA(NULL, propio, (unsigned long)(sizeof propio - 1));
++  f = fopen(SM_ESTADO_MARCA, "rb");
++  if (f) {
++    size_t n = fread(leido, 1, sizeof leido - 1, f);
++    leido[n] = 0;
++    fclose(f);
++  }
++  if (strcmp(leido, propio) == 0) return false;
++  if (leido[0]) {
++    fprintf(stderr, "suspension: el estado es de otra version, se descarta\n");
++    fflush(stderr);
++  }
++  f = fopen(SM_ESTADO_MARCA, "wb");
++  if (f) { fwrite(propio, 1, strlen(propio), f); fclose(f); }
++  return true;
++}
++
++static void SmRestauraEstado(void) {
++  if (SmEstadoEsDeOtraVersion()) {
++    remove(SM_ESTADO);
++    return;
++  }
++  remove(SM_ESTADO_CARGANDO);
++  if (rename(SM_ESTADO, SM_ESTADO_CARGANDO) != 0) {
++    fprintf(stderr, "suspension: no hay estado guardado, arranque normal\n");
++    return;
++  }
++  bool ok = RtlLoadSnapshot(SM_ESTADO_CARGANDO);
++  remove(SM_ESTADO_CARGANDO);
++  fprintf(stderr, ok ? "suspension: estado restaurado, sigue la partida\n"
++                     : "suspension: el estado no se pudo cargar, se empieza de cero\n");
++  fflush(stderr);
++}
++
++static void SmGuardaEstado(void) {
++  SmEstadoEsDeOtraVersion();   /* deja la marca de ESTE binario junto al estado */
++  if (!RtlSaveSnapshot(SM_ESTADO)) {
++    fprintf(stderr, "suspension: NO se pudo guardar el estado\n");
++    fflush(stderr);
++  }
++}
++#endif
++
+ #ifndef __ANDROID__
+ #undef main   /* desktop: keep plain main() even if SDL_main.h remapped it */
+ #endif
++#ifdef SM_UWP
++/* En UWP el proceso arranca por CoreApplication: WinMain llama a SDL_RunApp y este
++   a SmRecompMain (ver xbox\port\uwp_entry.cpp). */
++int SmRecompMain(int argc, char** argv) {
++#else
+ int main(int argc, char** argv) {
++#endif
+ #ifndef _WIN32
+   /* On Windows, do NOT install a SIGSEGV handler: the CRT's signal shim
+    * intercepts access violations BEFORE SetUnhandledExceptionFilter, so
+@@ -1378,7 +1502,16 @@ int main(int argc, char** argv) {
+   int window_height = custom_size ? g_config.window_height :
+       g_current_window_scale * SmDisplay_GetWindowBaseHeight();
+ 
+-#ifndef __ANDROID__
++/* UWP (Xbox): ni OpenGL (prohibido) ni SDL_Renderer (su backend de D3D11 pide el
++   HWND de la ventana y aqui SDL usa WinRT, donde no hay HWND). El presentador es
++   uno propio de Direct3D 11 sobre la CoreWindow: xbox\port\uwp_entry.cpp. */
++#if defined(SM_UWP)
++  {
++    extern void SmUwpRenderer_Create(struct RendererFuncs *funcs);
++    SmUwpRenderer_Create(&g_renderer_funcs);
++  }
++#else
++#if !defined(__ANDROID__)
+   if (g_config.output_method == kOutputMethod_OpenGL) {
+     g_win_flags |= SDL_WINDOW_OPENGL;
+     OpenGLRenderer_Create(&g_renderer_funcs);
+@@ -1389,6 +1522,7 @@ int main(int argc, char** argv) {
+      * is not compiled there. */
+     g_renderer_funcs = kSdlRendererFuncs;
+   }
++#endif
+ 
+   /* Load the SNES ROM. argv[0] is the launcher-resolved path (always
+    * non-NULL after snesrecomp_launcher_resolve_rom returned success). */
+@@ -1549,9 +1683,9 @@ error_reading:;
+      * titles in snesrecomp f022984; that change never reached Super Metroid, so
+      * it opened the device 40 samples/s slower than the guest produces and
+      * walked the output ring to its cap in under three minutes of play. */
+-    /* The consumer converts the SPC's native 32040 Hz onto this rate and
+-     * cannot infer it; see RtlSetAudioOutputRate in common_rtl.h. */
+-    RtlSetAudioOutputRate(have.freq);
++    /* The consumer converts the SPC's native 32040 Hz onto this rate and
++     * cannot infer it; see RtlSetAudioOutputRate in common_rtl.h. */
++    RtlSetAudioOutputRate(have.freq);
+     g_frames_per_block = (534 * have.freq + 32040 / 2) / 32040;
+     g_audiobuffer = (uint8 *)calloc(g_frames_per_block * have.channels * sizeof(int16), 1);
+     host_report_breadcrumb(
+@@ -1574,6 +1708,11 @@ error_reading:;
+   MkDir("saves");
+     
+   RtlReadSram();
++#ifdef SM_UWP
++  /* Volver donde lo dejaste: después de RtlReadSram, que es quien deja la SRAM en su sitio. */
++  SmRestauraEstado();
++  s_sm_t_estado = SmMonotonicSeconds();
++#endif
+ 
+   {
+ #if SNESRECOMP_SDL3
+@@ -1625,6 +1764,24 @@ error_reading:;
+   unsigned run_frames = run_frames_env ? (unsigned)strtoul(run_frames_env, NULL, 10) : 0;
+   const char *trace_path = getenv("SM_STATE_TRACE");
+   FILE *state_trace = trace_path ? fopen(trace_path, "w") : NULL;
++  /* Volcado de la RAM del invitado en cuadros concretos: SM_STATE_TRACE dice
++     EN QUE cuadro divergen dos builds, esto dice QUE BYTES cambiaron.
++        SM_RAM_DUMP=<prefijo>         -> escribe <prefijo>-f<cuadro>.bin
++        SM_RAM_DUMP_FRAMES=150,151    -> lista de cuadros (por defecto ninguno) */
++  const char *ram_dump_prefix = getenv("SM_RAM_DUMP");
++  unsigned ram_dump_frames[SM_RAM_DUMP_MAX];
++  unsigned ram_dump_count = 0;
++  if (ram_dump_prefix && *ram_dump_prefix) {
++    const char *list = getenv("SM_RAM_DUMP_FRAMES");
++    for (const char *p = list; p && *p && ram_dump_count < SM_RAM_DUMP_MAX; ) {
++      char *end;
++      unsigned long v = strtoul(p, &end, 10);
++      if (end == p) break;
++      ram_dump_frames[ram_dump_count++] = (unsigned)v;
++      p = (*end == ',') ? end + 1 : end;
++    }
++    if (!ram_dump_count) ram_dump_prefix = NULL;
++  }
+   uint64_t presentations = 0;
+   bool profile_requested = getenv("SM_PROFILE") && atoi(getenv("SM_PROFILE")) != 0;
+   unsigned profile_first = getenv("SM_PROFILE_START_FRAME")
+@@ -1808,6 +1965,13 @@ error_reading:;
+     if (SmCustomRendererEnabled()) SmRendererLatchObjectState(g_ram);
+     RtlRunFrame(inputs | GetActiveControllers() | debug_server_get_controller_active_mask());
+     ApplyScriptForcePokes();
++#ifdef SM_UWP
++    /* Volver donde lo dejaste: aquí el cuadro está entero, que es cuando el estado es coherente. */
++    {
++      double t_susp = SmMonotonicSeconds();
++      if (t_susp - s_sm_t_estado >= 10.0) { s_sm_t_estado = t_susp; SmGuardaEstado(); }
++    }
++#endif
+     SmProfileEnd(kSmProfileGuest, profile_start);
+ 
+ #ifdef ENABLE_ORACLE_BACKEND
+@@ -1834,8 +1998,59 @@ error_reading:;
+     frameCtr++;
+     if (frameCtr == 1)
+       host_report_breadcrumb("first frame simulated");
++#ifdef SM_UWP
++    /* Consola: latido corto con reloj de pared y reparto del tiempo por etapa. */
++    else if (frameCtr % 60 == 0) {
++      /* Contador de FPS con R3: los cuadros por segundo de verdad. El contador del juego pinta
++       * `frecuencia / lo que tarda RtlDrawPpuFrame`, o sea cuántas veces por segundo PODRÍA
++       * componerse el cuadro —en la consola salía «9027»—, que no dice si el juego va a 60. */
++      {
++        static double t_fps_prev;
++        double t_fps_ahora = SmMonotonicSeconds();
++        if (t_fps_prev > 0 && t_fps_ahora > t_fps_prev)
++          g_fps_real = (int)(60.0 / (t_fps_ahora - t_fps_prev) + 0.5);
++        t_fps_prev = t_fps_ahora;
++      }
++      host_report_breadcrumb("latido: frame=%u t=%.1fs presentaciones=%u",
++                             frameCtr, SmMonotonicSeconds(), presentations);
++      host_report_breadcrumb(
++          "reparto ms: guest=%.0f raster=%.0f adquirir=%.0f componer=%.0f presentar=%.0f",
++          g_sm_timings[kSmProfileGuest].total * 1000,
++          g_sm_timings[kSmProfileRaster].total * 1000,
++          g_sm_timings[kSmProfileAcquire].total * 1000,
++          g_sm_timings[kSmProfileCompose].total * 1000,
++          g_sm_timings[kSmProfilePresent].total * 1000);
++      {
++        /* Caidas al interprete: si el tiempo del invitado es interpretacion, estos
++           contadores suben a la par. */
++        extern long interp_tier_hit_count(void);
++        extern void interp_tier2_stats(int *sites, unsigned long long *clean,
++                                       unsigned long long *bail);
++        int sitios = 0;
++        unsigned long long limpias = 0, abortos = 0;
++        interp_tier2_stats(&sitios, &limpias, &abortos);
++        host_report_breadcrumb("interprete: caidas=%ld sitios=%d limpias=%llu abortos=%llu",
++                               interp_tier_hit_count(), sitios, limpias, abortos);
++        {
++          extern unsigned long long SmUwpInterpSteps(void);
++          static unsigned long long antes;
++          unsigned long long ahora = SmUwpInterpSteps();
++          host_report_breadcrumb("pasos interpretados: %llu (+%llu en 60 cuadros)",
++                                 ahora, ahora - antes);
++          /* Si el invitado gira en vacio, el volcado de los ultimos pasos muestra
++             siempre las mismas direcciones: ahi esta el bucle de espera. */
++          if (ahora - antes > 300000) {
++            extern void interp_bridge_dump_recent_steps(int n, FILE *out);
++            interp_bridge_dump_recent_steps(12, stderr);
++          }
++          antes = ahora;
++        }
++      }
++    }
++#else
+     else if (frameCtr % 3600 == 0)   /* ~once a minute at 60 fps */
+       host_report_breadcrumb("heartbeat: frame=%u", frameCtr);
++#endif
+     g_snes->disableRender = g_turbo && (frameCtr & 0xf) != 0;
+ 
+     profile_start = SmProfileStart();
+@@ -1846,6 +2061,11 @@ error_reading:;
+       fprintf(state_trace, "%u,%08x,%04x,%04x,%04x,%04x,%04x,%02x,%02x,%02x\n",
+               frameCtr, crc32_compute(g_ram, 0x20000), g_cpu.A, g_cpu.X, g_cpu.Y,
+               g_cpu.S, g_cpu.D, g_cpu.DB, g_cpu.PB, g_cpu.P);
++    if (ram_dump_prefix) {
++      for (unsigned i = 0; i < ram_dump_count; i++)
++        if (ram_dump_frames[i] == frameCtr)
++          SmDumpGuestRam(ram_dump_prefix, frameCtr);
++    }
+     SmProfileEnd(kSmProfileTrace, profile_start);
+     if (paced_realtime)
+       SmClockSimulationDone(&video_clock, SmMonotonicSeconds());
+@@ -2123,6 +2343,16 @@ static void HandleGamepadInput(GamepadInfo *gi, int button, bool pressed) {
+   if (!!(gi->modifiers & (1 << button)) == pressed)
+     return;
+   gi->modifiers ^= 1 << button;
++#ifdef SM_UWP
++  /* Contador de FPS con R3: aquí el botón llega ya remapeado por el juego y sin repeticiones.
++   * No se consume: la función sigue, así que si alguien asigna R3 a una acción del juego,
++   * la acción se ejecuta igual. */
++  if (button == kGamepadBtn_R3 && pressed) {
++    g_display_perf = !g_display_perf;
++    fprintf(stderr, "FPS readout %s\n", g_display_perf ? "on" : "off");
++    fflush(stderr);
++  }
++#endif
+   if (pressed)
+     gi->last_cmd[button] = FindCmdForGamepadButton(button + gi->index * kGamepadBtn_Count, gi->modifiers);
+   if (gi->last_cmd[button] != 0)
+diff --git a/src/post_mortem.c b/src/post_mortem.c
+index 079415b..402825c 100644
+--- a/src/post_mortem.c
++++ b/src/post_mortem.c
+@@ -34,10 +34,14 @@
+ #define WIN32_LEAN_AND_MEAN
+ #define NOMINMAX
+ #include <windows.h>
++/* UWP: dbghelp y tlhelp32 no existen en AppContainer; sin ellos se usa el volcado
++ * portable de la rama #else de este mismo archivo. */
++#ifndef SM_UWP
+ #include <dbghelp.h>
+ #include <tlhelp32.h>
+ #pragma comment(lib, "dbghelp.lib")
+ #endif
++#endif
+ 
+ #include <stdint.h>
+ #include <stdio.h>
+@@ -577,7 +581,7 @@ static void dump_tripwires_json(FILE *f) {
+ #endif
+ }
+ 
+-#ifdef _WIN32
++#if defined(_WIN32) && !defined(SM_UWP)
+ 
+ /* Walk one thread's host stack, write up to `max_frames` frames as
+  * comma-separated JSON objects to `f`. Caller wraps in []. */
+@@ -716,7 +720,7 @@ static void dump_all_threads_json(FILE *f, void *fault_info_void) {
+     CloseHandle(snap);
+ }
+ 
+-#else  /* !_WIN32 */
++#else  /* !_WIN32, o UWP */
+ 
+ static void dump_all_threads_json(FILE *f, void *fault_info_void) {
+     (void)fault_info_void;
+diff --git a/src/sm_cpu_infra.c b/src/sm_cpu_infra.c
+index b592849..aa7a95a 100644
+--- a/src/sm_cpu_infra.c
++++ b/src/sm_cpu_infra.c
+@@ -1,6 +1,26 @@
+ #include "common_cpu_infra.h"
+ #include "sm_rtl.h"
+ 
++#include "common_rtl.h"              /* g_ram, g_apu_last_sync_master */
++#include "cosim_state.h"             /* g_cpu */
++#include "snes/interp_bridge.h"      /* interp_bridge_set_master_deadline */
++
++/* Reconciliacion despues de cargar un estado guardado.
++ *
++ * `RtlLoadSnapshot` restaura el blob del SNES, pero el estado de ejecucion del lado del HOST no
++ * cabe ahi, y el runner deja este hook para rebuscarlo contra la WRAM recien restaurada. Sin el,
++ * el estado se cargaba y el juego aparecia en la introduccion: `g_cpu.ram` seguia apuntando a
++ * donde apuntara antes. Es el equivalente de `Dkc1OnStateLoaded`, que es por lo que la
++ * suspension de los Donkey Kong Country si funcionaba. */
++static void SmOnStateLoaded(uint32_t version) {
++  (void)version;
++  g_cpu.ram = g_ram;
++  g_apu_last_sync_master = g_cpu.master_cycles;
++  interp_bridge_set_master_deadline(0);
++  /* `beamMasterLast` lo pone ya RtlLoadSnapshot justo antes de llamarnos; aqui `Snes` es un tipo
++   * opaco y tocarlo no compila. */
++}
++
+ /* Game registration consumed by RtlRegisterGame() in main.c. The
+  * `.title` / `.save_name_prefix` strings drive the save-file naming
+  * (saves/save<N>.sav). run_frame / draw_ppu_frame are the per-frame
+@@ -11,4 +31,5 @@ const RtlGameInfo kSuperMetroidGameInfo = {
+   .run_frame = &RunOneFrameOfGame,
+   .draw_ppu_frame = &SmDrawPpuFrame,
+   .save_name_prefix = "save",
++  .on_state_loaded = &SmOnStateLoaded,
+ };

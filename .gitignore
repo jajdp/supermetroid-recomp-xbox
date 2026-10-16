@@ -1,0 +1,73 @@
+# Nothing that belongs to the game ever goes in here. Blocked by extension, so it cannot slip in
+# by accident, and not as a substitute for reading NOTICE.md.
+
+# ROM dumps
+*.sfc
+*.smc
+*.fig
+*.swc
+*.zip
+*.7z
+
+# executables, debug info and packages
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.lib
+*.obj
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+*.appxsym
+*.appxupload
+
+# signing certificates: yours is yours
+*.pfx
+*.p12
+*.cer
+*.snk
+
+# saves, states and the files the runtime writes next to itself
+*.sav
+*.srm
+*.state
+saves/
+sm-stdout.txt
+sm-stderr.txt
+sm-trace.txt
+*-f[0-9]*.bin
+
+# generated game sources: these are the recompilation of YOUR rom, produced by the project's own
+# regen script on your machine (docs/INSTALL.md section 2). They are game code and never ours.
+gen/
+funcs.h
+
+# build trees, in case this is cloned next to one
+build/
+build-*/
+smu*/
+content/
+priconfig.xml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# editors and OS
+.vs/
+.vscode/
+.idea/
+*.swp
+*.log
+*.tmp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# The package tiles are supplied by whoever packages (docs/ASSETS.md); no game art is distributed
+# here.
+package/Assets/*.png

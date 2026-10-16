@@ -1,0 +1,116 @@
+diff --git a/runner/src/host_report.c b/runner/src/host_report.c
+index fdac6b2..0a2079d 100644
+--- a/runner/src/host_report.c
++++ b/runner/src/host_report.c
+@@ -177,6 +177,19 @@ void host_report_breadcrumb(const char *fmt, ...) {
+     va_start(ap, fmt);
+     breadcrumb_v(fmt, ap);
+     va_end(ap);
++#ifdef SM_UWP
++    /* UWP (Xbox): repetir la miga en la traza del arranque, que es lo unico legible
++       desde el Device Portal. */
++    {
++        extern void SmUwpTraza(const char *texto);
++        char linea[512];
++        va_list ap2;
++        va_start(ap2, fmt);
++        vsnprintf(linea, sizeof(linea), fmt, ap2);
++        va_end(ap2);
++        SmUwpTraza(linea);
++    }
++#endif
+ }
+ 
+ void host_report_fatal(const char *msg) {
+diff --git a/runner/src/launcher_picker.c b/runner/src/launcher_picker.c
+index 720b16f..6f7152e 100644
+--- a/runner/src/launcher_picker.c
++++ b/runner/src/launcher_picker.c
+@@ -3,7 +3,7 @@
+ #include <stdio.h>
+ #include <string.h>
+ 
+-#ifdef _WIN32
++#if defined(_WIN32) && !defined(SM_UWP)
+ #  define WIN32_LEAN_AND_MEAN
+ #  include <windows.h>
+ #  include <commdlg.h>
+@@ -32,6 +32,12 @@ static int run_picker_cmd(const char *cmd, char *out, size_t max_len) {
+ #endif
+ 
+ int snesrecomp_pick_rom_file(char *out, size_t max_len) {
++#ifdef SM_UWP
++    /* UWP (Xbox): no hay dialogo de archivos de escritorio, y no hace falta: la ROM viaja
++       dentro del paquete y su ruta se siembra en rom.cfg antes de arrancar el juego. */
++    (void)out; (void)max_len;
++    return 0;
++#else
+     if (!out || max_len == 0) return 0;
+ #ifdef _WIN32
+     OPENFILENAMEA ofn;
+@@ -73,4 +79,5 @@ int snesrecomp_pick_rom_file(char *out, size_t max_len) {
+             "Pass the ROM path as the first argument.\n");
+     return 0;
+ #endif
++#endif  /* SM_UWP */
+ }
+diff --git a/runner/src/rom_image_verify.c b/runner/src/rom_image_verify.c
+index 4a87b38..020196b 100644
+--- a/runner/src/rom_image_verify.c
++++ b/runner/src/rom_image_verify.c
+@@ -94,7 +94,7 @@ int snesrecomp_rom_verify_crc32(const char *path, uint32_t expected_crc) {
+              expected_crc, actual);
+     fprintf(stderr, "[Launcher] %s\n", msg);
+ #ifdef _WIN32
+-    MessageBoxA(NULL, msg, "Wrong ROM", MB_ICONWARNING | MB_OK);
++    OutputDebugStringA(msg);  /* UWP: sin user32 (no MessageBox en AppContainer) */
+ #endif
+     return 0;
+ }
+@@ -121,7 +121,7 @@ int snesrecomp_rom_verify_sha256(const char *path,
+              expected_hex, actual_hex);
+     fprintf(stderr, "[Launcher] %s\n", msg);
+ #ifdef _WIN32
+-    MessageBoxA(NULL, msg, "Wrong ROM", MB_ICONWARNING | MB_OK);
++    OutputDebugStringA(msg);  /* UWP: sin user32 (no MessageBox en AppContainer) */
+ #endif
+     return 0;
+ }
+diff --git a/runner/src/snes/interp_bridge.c b/runner/src/snes/interp_bridge.c
+index c611973..f6a6b61 100644
+--- a/runner/src/snes/interp_bridge.c
++++ b/runner/src/snes/interp_bridge.c
+@@ -648,6 +648,9 @@ typedef struct { uint32_t pc; int32_t frame; uint16_t sp; uint8_t op; uint8_t pa
+ static ITraceRecentEnt g_itrace_recent[ITRACE_RECENT_LEN];
+ static uint64_t g_itrace_recent_n = 0;
+ 
++/* Consola: cuantas instrucciones ha interpretado el motor en total. */
++unsigned long long SmUwpInterpSteps(void) { return g_itrace_recent_n; }
++
+ void interp_bridge_dump_recent_steps(int n, FILE *out) {
+     if (!out) out = stderr;
+     if (n <= 0 || (uint64_t)n > g_itrace_recent_n) n = (int)(g_itrace_recent_n < ITRACE_RECENT_LEN
+@@ -664,10 +667,23 @@ void interp_bridge_dump_recent_steps(int n, FILE *out) {
+ 
+ /* Install the ring dump as cpu_state.c's halt-path hook (explicit hook, not
+  * a PE weak symbol — see cpu_state.c). Constructor runs at image load. */
++#if defined(_MSC_VER)
++/* MSVC no tiene __attribute__((constructor)): el equivalente es un puntero en la seccion
++   .CRT$XCU, que el CRT recorre al cargar la imagen. Mismo patron que SNES_MOD_CONSTRUCTOR
++   de mod_runtime.h. */
++static void __cdecl itrace_install_dump_hook(void);
++#pragma section(".CRT$XCU", read)
++__declspec(allocate(".CRT$XCU"))
++static void(__cdecl *itrace_install_dump_hook_constructor)(void) = itrace_install_dump_hook;
++static void __cdecl itrace_install_dump_hook(void) {
++    g_interp_recent_dump_hook = interp_bridge_dump_recent_steps;
++}
++#else
+ __attribute__((constructor))
+ static void itrace_install_dump_hook(void) {
+     g_interp_recent_dump_hook = interp_bridge_dump_recent_steps;
+ }
++#endif
+ 
+ /* Tier-2 coverage table (definitions below, § gap manifest): shared by the
+  * tier-down entries AND the in-bridge gap recorders in the core loop. */

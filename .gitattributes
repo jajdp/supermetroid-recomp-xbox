@@ -1,0 +1,43 @@
+# Line endings, fixed here so that a clone gives the same bytes on any machine.
+#
+# This matters more than usual: the files under src/ are compiled into the game as they are, and
+# the patches have to match the bytes of the tree they are applied to. Leaving it to each
+# machine's core.autocrlf would make "did the recipe reproduce the tree?" depend on who cloned it.
+
+*               text=auto eol=lf
+
+# PowerShell is happier with CRLF on Windows, and these scripts only ever run there.
+*.ps1           text eol=crlf
+
+# cmd.exe splits a .bat saved with LF in the wrong places: CRLF, always.
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# Shell scripts must be LF, or the shebang line carries a stray \r and the script will not run.
+*.sh            text eol=lf
+
+# Patches are NOT normalised here, and this is deliberate.
+#
+# Upstream is mostly LF but not entirely: three lines of src/main.c in v0.3.1 end in CRLF, and
+# 01-game-src.patch is the hunk that removes them. Keeping patches out of the line-ending
+# machinery means a clone gets the exact bytes `git diff` produced, so whether the recipe applies
+# never depends on how git was configured to rewrite it.
+#
+# Measured rather than assumed, on a fresh clone of v0.3.1 (docs/HOW-IT-WORKS.md, "Line
+# endings"): src/main.c upstream has 3 CR and 2347 LF; after the patch it has 0 CR and 2577 LF,
+# 100,854 bytes, identical to the tree the shipped package was built from. A copy of the patch
+# flattened to LF also applies and produces that same file byte for byte -- git apply matches
+# those three lines either way -- so this line is not what makes the recipe work. It is here so
+# that it cannot stop working on a machine whose git normalises differently.
+*.patch         -text
+*.diff          -text
+
+# Markdown, plain config and the manifest: LF, like everything else.
+*.md            text eol=lf
+*.toml          text eol=lf
+*.appxmanifest  text eol=lf
+
+# Images are bytes: git must neither convert them nor try to diff them.
+*.png           binary
+*.jpg           binary
+*.ico           binary
