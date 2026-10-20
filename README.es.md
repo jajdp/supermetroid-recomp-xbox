@@ -1,7 +1,7 @@
 # Super Metroid en la Xbox — el port UWP
 
 Cómo coger la recompilación estática [SuperMetroidRecomp](https://github.com/mstan/SuperMetroidRecomp)
-de *Super Metroid* (Super Nintendo, 1994) y hacerla correr **en una Xbox Series en modo
+de *Super Metroid* (Super Nintendo, 1994) y hacerla correr **en una Xbox Series X en modo
 desarrollador**, como un paquete UWP que compilas y firmas tú.
 
 *(English: [README.md](README.md))*
@@ -9,6 +9,16 @@ desarrollador**, como un paquete UWP que compilas y firmas tú.
 No es una teoría: el juego arranca, se juega con mando en **16:9**, mantiene la simulación a **58,3
 cuadros por segundo** presentando a 59 Hz, enseña su cadencia en pantalla al pulsar el stick derecho
 y vuelve donde lo dejaste después de que la consola lo termine.
+
+## En qué consola se probó
+
+**En una Xbox Series X**, en modo desarrollador. Las dos consolas en las que se construyó y se probó esto
+son Series X, así que es el único hardware al que se refiere cualquier cosa que se afirme aquí.
+
+**En una Series S no se ha probado nunca, ni una vez.** Es otra máquina: menos memoria disponible para un
+juego y una GPU más floja. Puede que funcione en una, puede que vaya más despacio, o puede que no
+arranque; nada de aquí se ha medido en ella. Si lo ejecutas en una Series S, lo que obtengas no es lo que
+dice este README, y ninguna de las cifras de aquí es una promesa sobre esa consola.
 
 ## Qué es este repositorio
 

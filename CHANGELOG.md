@@ -5,9 +5,18 @@ All notable changes to this recipe. Dates are `YYYY-MM-DD`.
 The version here is the **recipe's**, not the game's and not the package's. The package version is
 whatever you pass to `package_uwp.py --version`.
 
+## 1.0.1 — 2026-10-20
+
+### Changed
+
+- **The README now says which console this was tested on, and which one it was not.** Everything here
+  was built and measured on an **Xbox Series X** in Developer Mode; a **Series S has never been tried**,
+  so nothing here says anything about one. The wording used to say "Xbox Series", which reads as if it
+  covered both, and it does not.
+
 ## 1.0.0 — 2026-10-14
 
-First release. The port itself was built and has been running on two Xbox Series consoles since
+First release. The port itself was built and has been running on two Xbox Series X consoles since
 2026-09-11; this is the recipe for it, extracted, cleaned of anything local, and verified against a
 fresh clone.
 
