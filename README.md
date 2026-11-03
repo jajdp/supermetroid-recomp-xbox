@@ -121,6 +121,17 @@ one file the project's own saved patches had been missing. The numbers and the m
 
 ## Credits and license
 
+**Almost none of what makes this work is ours.** This repository is a recipe that glues together other people's work; without any one of these pieces there would be no port at all.
+
+| What it does | Who made it | License |
+|---|---|---|
+| **[SuperMetroidRecomp](https://github.com/mstan/SuperMetroidRecomp)** — recompiles *Super Metroid* | **mstan** | see the project |
+| **[snesrecomp](https://github.com/mstan/snesrecomp)** — the SNES static recompiler ecosystem | **RetroPortingToolKit** (formerly mstan) | PolyForm Noncommercial 1.0.0 |
+| **[SDL](https://github.com/libsdl-org/SDL)** — window, input and audio | **Sam Lantinga** and the SDL contributors | zlib |
+
+**The packaging recipe, the tooling and this documentation** are by **Recompilaciones**.
+
+
 Port and tooling by **Recompilaciones**. Released under the
 [PolyForm Noncommercial License 1.0.0](LICENSE), matching the license of the SuperMetroidRecomp
 project and the snesrecomp engine this is a derivative of.
