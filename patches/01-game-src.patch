@@ -98,8 +98,8 @@ index c8a11d2..4d0a07f 100644
 + * segundos y se vuelve a cargar al arrancar.
 + *
 + * Cada 10 s y no en el aviso de suspensión: cuando ese aviso llega puede que ya no
-+ * se emule un cuadro más (medido en Street Fighter EX2 Plus), y el estado solo es
-+ * coherente en un borde de cuadro.
++ * se emule un cuadro más, y el estado solo es coherente en un borde de cuadro, así
++ * que esperar a ese aviso es esperar demasiado.
 + *
 + * El archivo se aparta antes de cargarlo y se borra después: si un estado corrupto
 + * colgara el juego al restaurarlo, el arranque siguiente ya no lo encuentra y el
@@ -113,9 +113,9 @@ index c8a11d2..4d0a07f 100644
 +static double s_sm_t_estado = 0.0;
 +
 +/* Estado de otra version: un estado escrito por OTRO binario deja la máquina emulada
-+ * inconsistente y el juego sale con los gráficos rotos (le pasó al usuario en Super Mario World
-+ * el 2026-10-06). La marca es la ruta del ejecutable, que cambia en cada instalación; la fecha
-+ * de compilación NO vale, porque solo cambia si se recompila ESTE archivo. */
++ * inconsistente y el juego sale con los gráficos rotos. La marca es la ruta del ejecutable,
++ * que cambia en cada instalación; la fecha de compilación NO vale, porque solo cambia si se
++ * recompila ESTE archivo. */
 +#define SM_ESTADO_MARCA "suspension.marca"
 +
 +static bool SmEstadoEsDeOtraVersion(void) {
@@ -410,8 +410,8 @@ index b592849..aa7a95a 100644
 + * `RtlLoadSnapshot` restaura el blob del SNES, pero el estado de ejecucion del lado del HOST no
 + * cabe ahi, y el runner deja este hook para rebuscarlo contra la WRAM recien restaurada. Sin el,
 + * el estado se cargaba y el juego aparecia en la introduccion: `g_cpu.ram` seguia apuntando a
-+ * donde apuntara antes. Es el equivalente de `Dkc1OnStateLoaded`, que es por lo que la
-+ * suspension de los Donkey Kong Country si funcionaba. */
++ * donde apuntara antes. El runner deja este hook precisamente para eso, y sin el la
++ * suspension no funciona aunque el estado se cargue entero. */
 +static void SmOnStateLoaded(uint32_t version) {
 +  (void)version;
 +  g_cpu.ram = g_ram;

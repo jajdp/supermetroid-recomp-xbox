@@ -1,13 +1,12 @@
 // uwp_entry.cpp — punto de entrada del port UWP (Xbox Series X, modo desarrollador) de
 // SuperMetroidRecomp.
 //
-// Este juego NO comparte el molde de los tres Donkey Kong Country: su host es un `main.c`
-// de ~2 300 líneas construido sobre SDL, así que aquí no se reescribe el host, se le pone
-// alrededor lo que UWP exige y se deja al juego hacer lo suyo.
+// Aquí no se reescribe el host: es un `main.c` de ~2 300 líneas construido sobre SDL, así
+// que se le pone alrededor lo que UWP exige y se deja al juego hacer lo suyo.
 //
 //  - En UWP el proceso no arranca por `main()` sino por CoreApplication. El SDL3 para UWP
-//    (el mismo que usa el port de Mario Kart Wii en esta consola) trae ese cascarón dentro
-//    de `SDL_RunApp`, que crea la CoreWindow y llama a la función de la app en su hilo.
+//    trae ese cascarón dentro de `SDL_RunApp`, que crea la CoreWindow y llama a la función
+//    de la app en su propio hilo.
 //  - El juego dibuja con el presentador por SDL_Renderer (respaldado por Direct3D 11), que
 //    es el que usa en Android. La rama de OpenGL se compila fuera: la Xbox no la permite.
 //  - El directorio de instalación es de SOLO LECTURA. El juego hace toda su entrada/salida
@@ -170,7 +169,7 @@ static bool PreparaCarpetaDeDatos(const std::string &paquete) {
 // el HWND de la ventana (`SDL_CreateRenderer` falla con «Couldn't get window handle») y el
 // backend de vídeo de SDL en UWP es WinRT, donde no hay HWND sino una CoreWindow. Por eso
 // aquí se implementa el conector `RendererFuncs` del propio motor con Direct3D 11 sobre la
-// CoreWindow, que es exactamente lo que hacen los tres Donkey Kong Country.
+// CoreWindow, que es lo que sí funciona en esta consola.
 //
 // El juego entrega el cuadro terminado en un búfer de CPU (BGRA, ancho×alto): BeginDraw le
 // presta ese búfer y EndDraw lo sube a una textura y lo dibuja a pantalla completa.
